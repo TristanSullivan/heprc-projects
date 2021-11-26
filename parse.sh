@@ -45,6 +45,13 @@ function fail(){
   return 0 # want script to continue
 }
 
+function debug_log(){
+  if [ $DEBUG == "true" ]
+  then
+    echo "DEBUG: ${1}"
+  fi
+}
+
 function parse_history(){
 declare -A content
 while read -r line
@@ -54,19 +61,20 @@ do
   case "$line" in
 
     *GlobalJobId*) #LocalJobId
-      #echo "JobId"
+      debug_log "JobId"
       fullID=${linearr[2]}
       IFS="#" read -ra IdArr <<< "$fullID" || fail "Couldn't get JobID"
       content[LocalJobId]=${IdArr[1]}
+      debug_log "Job ID: $fullID"
     ;;
 
     *Owner*) #UserId
-      #echo "userID"
+      debug_log "userID"
       content[LocalUserId]=${linearr[2]}
     ;;
 
     *JobStatus*)
-      #echo "Jobstatus"
+      debug_log "Jobstatus"
       code=${linearr[2]}
 
       case "$code" in
@@ -103,103 +111,112 @@ do
     ;;
 
     *RemoteWallClockTime*) #Wall Duration
-      #echo "wall time"
+      debug_log "wall time"
       wallSeconds=${linearr[2]}
       get_ISO_diff ${linearr[2]} || fail "Converting wall time seconds to iso duration"
       content[WallDuration]=$ISOdiff
     ;;
 
     *CumulativeRemoteUserCpu*) #divide by number of cores at end
-      #echo "cpu time"
+      debug_log "cpu time"
       cpuSeconds=${linearr[2]}
       #content[CpuSeconds]=$cpuSeconds
     ;;
 
     *JobStartDate*)
-      #echo "start time"
+      debug_log "start time"
       startEpoch=${linearr[2]}
       content[StartTime]=$(date -d @"${linearr[2]}" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting start time (in epoch) to ISO date"
     ;;
 
     *EnteredCurrentStatus*)
-      #echo "Alt end time"
+      debug_log "Alt end time"
       statusTime=${linearr[2]}
       #content[EndTime]=$(date -d @"${linearr[2]}" -u +%Y-%m-%dT%H:%M:%SZ)
     ;;
 
-    *LastRemoteHost*) #machine name, submit host, VO
-      #echo "machine ename host vo..."
+    *RemoteHost*) #machine name, submit host, VO, takes RemoteHost or LastRemoteHost
+      
+      if [[ $line == *"Last"* ]] || [[ "$groupName" == "" ]] #LastRemoteHost takes precedence over RemoteHost
+      then
+        debug_log "Getting Machine Name, Host VO..."
 
-      machineAndSlot=${linearr[2]}
-      IFS="@" read -ra namearr <<< "$machineAndSlot" || fail "Reading host into array"
-      fullName=${namearr[1]}
-      content[MachineName]=$fullName
+        machineAndSlot=${linearr[2]}
+        debug_log "MachineAndSlot: $machineAndSlot"
+        IFS="@" read -ra namearr <<< "$machineAndSlot" || fail "Reading host into array"
+        debug_log "Name arr: ${namearr[@]}"
+        fullName=${namearr[1]}
+        content[MachineName]=$fullName
 
-      delim="--"
-      s=$fullName$delim
-      vmDetails=()
-      while [[ $s ]]
-      do
-        vmDetails+=( "${s%%"$delim"*}" )
-        s=${s#*"$delim"}
-      done
-      groupName=${vmDetails[0]}
-      cloudName=${vmDetails[1]}
-      case $groupName in
-        *atlas*)
-          content[SubmitHost]='csv2a.heprc.uvic.ca'
-          content[VO]='atlas'
-        ;;
-        belle-validation)
-          content[SubmitHost]='belle-sd.heprc.uvic.ca'
-          content[VO]='belle'
-        ;;
-        *belle*)
-          content[SubmitHost]='bellecs.heprc.uvic.ca'
-          content[VO]='belle'
-        ;;
-        dune)
-          content[SubmitHost]='dune-condor.heprc.uvic.ca'
-          content[VO]='dune'
-        ;;
-        babar)
-          content[SubmitHost]=""
-        ;;
-        testing)
-          content[SubmitHost]=""
-        ;;
-        *)
-          >&2 echo "ERROR: Unable to get submit host (HTCondor FQDN)"
-        ;;
-      esac
-
+        delim="--" #split machine name using "--" as delimiter
+        s=$fullName$delim
+        debug_log "s=fullNamedelim: $s"
+        vmDetails=()
+        while [[ $s ]]
+        do
+          vmDetails+=( "${s%%"$delim"*}" )
+          s=${s#*"$delim"}
+        done
+        debug_log "vmDetails array: ${vmDetails[@]}"
+        groupName=${vmDetails[0]}
+        cloudName=${vmDetails[1]}
+        case $groupName in
+          *atlas*)
+            content[SubmitHost]='csv2a.heprc.uvic.ca'
+            content[VO]='atlas'
+          ;;
+          belle-validation)
+            content[SubmitHost]='belle-sd.heprc.uvic.ca'
+            content[VO]='belle'
+          ;;
+          *belle*)
+            content[SubmitHost]='bellecs.heprc.uvic.ca'
+            content[VO]='belle'
+          ;;
+          dune)
+            content[SubmitHost]='dune-condor.heprc.uvic.ca'
+            content[VO]='dune'
+          ;;
+          babar)
+            content[SubmitHost]=""
+          ;;
+          testing)
+            content[SubmitHost]=""
+          ;;
+          *)
+            >&2 echo "ERROR: Unable to get submit host (HTCondor FQDN)"
+          ;;
+        esac
+      fi
     ;;
 
     *MATCH_EXP_MachineHEPSPEC*)
-      #echo "hepspec"
+      debug_log "hepspec"
       content[ServiceLevelType]="HEPSPEC"
       content[ServiceLevel]=${linearr[2]}
     ;;
 
     *CpusProvisioned*|*MachineAttrCpus*) #same thing but different names
-      #echo "Processors"
+      debug_log "Processors"
       content[Processors]=${linearr[2]}
     ;;
 
     *RequestCpu*)
+      debug_log "Requested cpus"
       cpuRequest=${linearr[2]}  
     ;;
 
     "") #When we get a newline we can write a record and clear our dictionary
         #also get site/queue names since using requirements string and vm name
-
+      debug_log "Final stuff"
       #echo "Checking time and status for ID: ${content[LocalJobId]}"
       
       if [[ "$startEpoch" == "" || $(bc <<< "$statusTime-$startEpoch == 0") -eq 1 ]]
       then
-        #echo "Got aborted job with 0 wall time or no start time, not writing. Clearing vars."
+        debug_log "Got aborted job with 0 wall time or no start time, not writing. Clearing vars."
         let nullRecords=$nullRecords+1
-        unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds
+        debug_log "Unsetting at aborted"
+        unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot
         declare -A content 
         continue
       fi
@@ -208,29 +225,32 @@ do
       then  #newer than yesterday
         if [ $progression != "-1" ]
         then
-          echo "Got records that are too new..."
+          debug_log "Got records that are too new..."
           progression="-1"
         fi
-        unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds
+        debug_log "Unsetting at records too new"
+        unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot
         declare -A content 
         continue #get to the next record since reverse chronological order
       elif [ $statusTime -lt $(date -d "Yesterday 00:00:00" -u +%s) ]
       then
         if [ $progression != 1 ]
         then
-          echo "Got a record that is too old, continuing just in case..."
+          debug_log "Got a record that is too old, continuing just in case..."
           progression=1
         fi
-        unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds
+        oldRecordDate=$statusTime #get this value so we can see where salvaged records are near to decide if we need to extend our leeway time
+        debug_log "Unsetting at record too old"
+        unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot #dont unset status time yet!
         declare -A content
         if [ $statusTime -lt $(date -d "3 days ago 00:00:00" -u +%s) ]
         then
           unset statusTime
           endOfRecords="true"
-          echo "End of leeway, exiting"
+          debug_log "End of leeway, exiting"
           break
         else
-          #echo ">>>>>>> Reached end of yesterday's records >>>>"
+          debug_log ">>>>>>> Reached end of yesterday's records >>>>"
           flag="true"
           unset statusTime
           continue #all other records should be older than this but give some leeway since record not exatly in order
@@ -239,7 +259,7 @@ do
 
       if [ $progression != "0" ]
       then
-        echo "Writing records from yesterday!"
+        debug_log "Writing records from yesterday!"
         progression=0
       fi
 
@@ -247,7 +267,8 @@ do
       if "$flag"
       then
         let salCount=$salCount+1
-        echo ">>>>>>>Salvaged a record from yesterday that was amongst records that are too old>>>>>>>>"
+        oldestDate=$oldRecordDate
+        debug_log ">>>>>>>Salvaged a record from yesterday that was amongst records that are too old (near time $(date -d @"$oldRecordDate" -u)) >>>>>>>>"
 
       fi
       #calculate end time
@@ -263,14 +284,6 @@ do
         content[WallDuration]=$ISOdiff
       fi    
 
-      #if [ $(bc <<< "$wallSeconds == 0") -eq 1 ] #if job has 0 wall time do not record it, it was probably aborted before running
-      #then
-      #  echo "Got aborted job with 0 wall time, not writing. Clearing vars."
-      #  unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds
-      #  declare -A content 
-      #  continue
-      #fi
-
       case $groupName in #set SITE
         atlas-cern)
           #use cloud name to set site
@@ -278,22 +291,22 @@ do
             *cern*)
               #cern site
               content[Site]="CERN-PROD" #is this correct?
-              recordFileName="cern-record.log"
+              recordFileName="cern_record"
             ;;
             *hephy*)
               #hephy site
               content[Site]="HEPHY-UIBK"
-              recordFileName="hephy-record.log"
+              recordFileName="hephy_record"
             ;;
             *lrz*) #may have _cloud
               #lrz site
               content[Site]="LRZ-LMU"
-              recordFileName="lrz-record.log"
+              recordFileName="lrz_record"
             ;;
             *ecdf*)
               #ecdf site
               content[Site]="UKI-SCOTGRID-ECDF" #add cloud or other vo?
-              recordFileName="ecdf-record.log"
+              recordFileName="ecdf_record"
             ;;
             *)
               site_error "Cern group but unkown cloud: $cloudName, so unknown site"
@@ -305,35 +318,54 @@ do
         atlas-uk)
           #set site as ecdf? currently not in use
           content[Site]="UKI-SCOTGRID-ECDF" #do we need to add _cloud or some other VO? 
-          recordFileName="ecdf-record.log"
+          recordFileName="ecdf_record"
         ;;
         atlas-uvic|belle)
           #set to uvic site
           content[Site]="CA-UVic-Cloud" #is anything different for atlas/belle? or is this specified elsewhere (ie VO, submit host)
-          recordFileName="uvic-record.log"
+          recordFileName="uvic_record"
         ;;
         australia-belle)
           #set to melbourne site
           content[Site]="Australia-T2"
-          recordFileName="melbourne-record.log"
+          recordFileName="melbourne_record"
         ;;
         babar)
           #skip record process
           content[Site]="babar"
           recordFileName=""
         ;;
-        belle-validation|desy-belle)
+        desy-belle)
           #desy site
           content[Site]="DESY-HH" #also a desy-zn site
-          recordFileName="desy-record.log"
+          recordFileName="desy_record"
         ;;
+        belle-validation)
+          case $cloudName in
+
+            *desy*)
+              content[Site]="DESY-HH"
+              recordFileName="desy_record"
+            ;;
+            *otter*|*beaver*|*heprc*)
+              content[Site]="CA-UVic-Cloud"
+              recordFileName="uvic_record"
+            ;;
+            *)
+              content[Site]="CA-UVic-Cloud"
+              recordFileName="uvic_record"
+              fail "Got unknown cloud name for belle-validation: $cloudName. Assuming it's UVIC and continuing..."
+            ;;
+          esac
+        ;;
+
         dune)
           #dune site (Marcus looking into)
           content[Site]="CA-DUNE"
-          recordFileName="dune-record.log"
+          recordFileName="dune_record"
         ;;
         "")
-          site_error "Group not listed: $groupName (JobStatus: ${content[JobStatus]})"
+          site_error "Group not listed: $groupName (JobStatus: ${content[JobStatus]}) (CloudName: $cloudName) (MachineandSlot: $machineAndSlot)"
           content[Site]=""
           recordFileName=""
         ;;
@@ -361,7 +393,7 @@ do
       then
         content[ServiceLevelType]="HEPSPEC"
         content[ServiceLevel]="0.00"
-        #fail "HEPSPEC not specified! Setting to 0.00"
+        fail "HEPSPEC not specified! Setting to 0.00"
       fi
 
  
@@ -377,8 +409,13 @@ do
         *atlas*|*belle*|*dune*)
           if [ "$wallSeconds" != "0" ] #if job was aborted and didn't run don't log it
           then
-            recordFileDir="/tmp/"
-            recordFilePath=$recordFileDir$recordFileName
+            recordFileDir=${2}
+            if [[ "$recordFileName" == *"uvic"* ]] #if recording for uvic add vo name 
+            then
+              recordFilePath=$recordFileDir${content[VO]}-$recordFileName$dateSuffix.alog
+            else
+              recordFilePath=$recordFileDir$recordFileName$dateSuffix.alog
+            fi
             if [ ! -s "$recordFilePath" ] #if no file exists then add the header
             then
               echo "APEL-individual-job-message: v0.3" > $recordFilePath
@@ -389,44 +426,194 @@ do
           fi
         ;;
         *)
-          >&2 echo "ERROR: Unknown group: $groupName. (not atlas, belle or dune), not writing record (JobStatus: ${content[JobStatus]})"
+          >&2 echo "ERROR: Unknown group: $groupName (not atlas, belle or dune), not writing record (JobStatus: ${content[JobStatus]}) (JobID: ${content[LocalJobId]})"
       esac
-      unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds
+      debug_log "Unsetting at end of function"
+      unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot
       declare -A content
-      #echo "Starting next entry"
+      debug_log "Starting next entry"
+      debug_log
+      debug_log
     ;;
 
   esac
 
-done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^JobStatus\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
-#done < <(cat ~/history.test | grep "^GlobalJobId\|^Owner\|^JobStatus\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
+done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^JobStatus\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
 }
 
-echo "*********************** Starting History Parsing Script v1.0 ******************"
-echo "*********************** $(date) **************************"
-flag="false" #flag for if we are finished with current date
-endOfRecords="false"
-salCount=0
-recordsWritten=0
-nullRecords=0
+function localRotate(){
+  echo "Rotating Log"
+  cat $logFile >> $logFile.archive
+  rm -f $logFile
+}
 
-#get all condor history files in /var/lib/condor/spool
-histMain=$(condor_config_val HISTORY)
-histFiles=($(ls -1t $histMain*)) # -1t lists in order of modification time newest first, * will also select rotated history files
-progression="-2"
+function rotateLogs(){
+  #get rid of two days old accouting files and move yesterdays files to .old
+  echo "Rotating accounting records"
+  rm -f $recordFileDir*.alog.old
+  recFiles=($recordFileDir*.alog)
+  for f in ${recFiles[@]}
+  do
+    mv $f $f.old 
+  done
+}
 
-for f in ${histFiles[@]}
-do
-  echo "@@@@@@@@@@@@@@@@@@@@@@@ Parsing file $f @@@@@@@@@@@@@@@@@@"
-  parse_history "$f"
-  if "$endOfRecords"
+function checkAndSplit(){ #takes wkdir=/home/mfens98/apel or other arg given
+
+  cp $1/*.alog $1/outgoing/
+
+  logsToSplit=($1/outgoing/*.alog)
+  for log in ${logsToSplit[@]}
+  do
+    fsize=$(stat --printf="%s" $log)
+    if [ $(bc <<< "$fsize >= 999999") == "1" ]
+    then
+      numSplits=$(bc <<< "scale=0; $fsize/975000 +1")
+      recordDelims=($(grep -n "%%" $log | cut -d: -f1))
+
+      startLine=1
+      for (( i=1; i<=$numSplits; i++ ))
+      do
+        if ! [[ $i -eq 1 ]]
+        then
+          echo "APEL-individual-job-message: v0.3" > "$log-$i"
+        fi
+
+        if [[ "$i" == "$numSplits" ]]
+        then
+          index=-1
+        else
+          index=$(bc <<< "scale=0; ${#recordDelims[@]} / $numSplits * $i")
+        fi
+        endLine=${recordDelims[$index]}
+        afterEnd=$(bc <<< "scale=0; $endLine+1" )
+        p="p"; q="q"
+        sedString="$startLine,$endLine$p;$afterEnd$q"
+
+        #echo $sedString
+        sed -n "$sedString" $log >> "$log-$i"
+
+        startLine=$afterEnd
+
+      done
+    fi
+  done
+}
+
+
+
+function main(){
+  echo "*********************** Starting on $(hostname -s) $(date) ******************"
+  
+  export DEBUG="false"
+  
+  flag="false" #flag for if we are finished with current date
+  endOfRecords="false"
+  salCount=0
+  recordsWritten=0
+  nullRecords=0
+  recordFileDir=${1}
+  logFile="accountingLog.log"
+  dateSuffix=$(date +%s)
+
+  #get all condor history files in /var/log/condor/history
+  histMain=$(condor_config_val HISTORY)
+  histFiles=($(ls -1t $histMain*)) # -1t lists in order of modification time newest first, * will also select rotated history files
+  progression="-2"
+
+  rotateLogs
+
+  for f in ${histFiles[@]}
+  do
+    echo "Parsing file $f"
+    parse_history "$f" "$recordFileDir"
+    if "$endOfRecords"
+    then
+      break
+    fi
+  done
+  if [ "$salCount" == "0" ]
   then
-    break
+    echo -e "Accounting Summary $(hostname -s)\n\tRecords Written: $recordsWritten\n\tRecords Salvaged: $salCount \
+    \n\t(Cutoff: $(date -d '3 days ago 00:00:00' -u ))\n\tRecords not started: $nullRecords"
+  else
+    echo -e "Accounting Summary $(hostname -s)\n\tRecords Written: $recordsWritten\n\tRecords Salvaged: $salCount \
+    \n\t(Oldest near date: $(date -d @$oldestDate -u) Cutoff: $(date -d '3 days ago 00:00:00' -u ))\n\tRecords not started: $nullRecords"
   fi
+  echo -e "************************ Finished on $(hostname -s) $(date) *********************\n"
+
+  
+}
+remoteRecordFileDir="/var/log/apel/"
+wkdir="/home/mfens98/apel"
+
+if [[ $wkdir == *"_"* ]]
+then
+  fail "Cannot have '_' in file path currently, exiting"
+  return 1
+fi
+
+logFile="$wkdir/logs/accountingLog.log"
+localRotate > /tmp/newLog.log 2>&1
+mv /tmp/newLog.log $logFile
+for host in csv2a bellecs "root@belle-sd" dune-condor
+do
+  ssh -p3121 -q $host.heprc.uvic.ca "$(typeset -f); main $remoteRecordFileDir" >> $logFile 2>&1
+  scp -P3121 -q $host.heprc.uvic.ca:$remoteRecordFileDir\*.alog $wkdir >> $logFile 2>&1
 done
 
+#combine records from belle and belle-validation
+vicRecords=($wkdir/belle-uvic*.alog)
+tail -n +2 ${vicRecords[1]} >> ${vicRecords[0]}
+if [[ "$?" == "0" ]]
+then
+  rm -f ${vicRecords[1]}
+else
+ fail "Combining belle-uvic records from bellecs and belle-sd" >> $logFile
+fi
 
-echo -e "\n************************ Finished History Parsing Script *********************"
-echo "************************ $(date) ************************"
+desyRecords=($wkdir/desy*.alog)
+tail -n +2 ${desyRecords[1]} >> ${desyRecords[0]}
+if [[ "$?" == "0" ]]
+then
+  rm -f ${desyRecords[1]}
+else
+  fail "Combining desy records from bellecs and belle-sd" >> $logFile
+fi
+#make record files smaller than 1MB
 
-echo -e "\n######### Accounting Summary ##########\n\tRecords Written: $recordsWritten\n\tRecords Salvaged: $salCount\n\tRecords not started: $nullRecords\n######################################"
+
+
+echo "Preparing to send record files" >> $logFile 2>&1
+
+checkAndSplit $wkdir
+  
+echo "Sending messages via the ssmsend container" >> $logFile 2>&1
+# run apel_container
+#need to delete records after they've been sent??
+sudo podman run --rm --entrypoint ssmsend \
+       -v /home/mfens98/apel_container/config/sender-dummy.cfg:/etc/apel/sender.cfg \
+       -v $wkdir/outgoing:/var/spool/apel/outgoing \
+       -v /etc/grid-security:/etc/grid-security \
+       -v $wkdir/logs:/var/log/apel \
+       stfc/ssm:latest >> $logFile 2>&1
+
+#delete sent messages
+#rm -f $wkdir/outgoing/*
+
+#move messages to archive
+echo "Archiving messages" >> $logFile 2>&1
+fullLogs=($wkdir/*.alog)
+
+dateTag=$(date -d "Yesterday 00:00:00" -u +%m%y)
+for record in ${fullLogs[@]}
+do 
+  IFS="_" read -ra splitName <<< $record #change in case _ exists elsewhere in file path?
+  IFS="/" read -ra splitPath <<< ${splitName[0]}
+
+  tail -n +2 $record >> $wkdir/archive/${splitPath[-1]}$dateTag
+
+  rm -f $record
+  unset splitName splitPath
+
+done >> $logFile 2>&1
