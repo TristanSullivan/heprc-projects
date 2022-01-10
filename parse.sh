@@ -18,7 +18,7 @@ function get_ISO_diff(){
 function write_messages(){
   
   echo "Site: ${content[Site]}"
-  echo "Status: ${content[JobStatus]}"
+#  echo "Status: ${content[JobStatus]}"
   echo "SubmitHost: ${content[SubmitHost]}"
   echo "MachineName: ${content[MachineName]}"
   echo "LocalJobId: ${content[LocalJobId]}"
@@ -73,48 +73,48 @@ do
       content[LocalUserId]=${linearr[2]}
     ;;
 
-    *JobStatus*)
-      debug_log "Jobstatus"
-      code=${linearr[2]}
-
-      case "$code" in
-
-      1)
-        content[JobStatus]='queued'
-      ;;
-
-      2|6)
-        content[JobStatus]='started'
-      ;;
-
-      3)
-        content[JobStatus]='aborted'
-      ;;
-
-      4)
-        content[JobStatus]='completed'
-      ;;
-
-      5)
-        content[JobStatus]='held'
-      ;;
-
-      7)
-        content[JobStatus]='suspended'
-      ;;
-
-      *)
-        content[JobStatus]='unknown'
-      ;;
-
-      esac
-    ;;
+#    *JobStatus*)
+#      debug_log "Jobstatus"
+#      code=${linearr[2]}
+#
+#      case "$code" in
+#
+#      1)
+#        content[JobStatus]='queued'
+#      ;;
+#
+#      2|6)
+#        content[JobStatus]='started'
+#      ;;
+#
+#      3)
+#        content[JobStatus]='aborted'
+#      ;;
+#
+#      4)
+#        content[JobStatus]='completed'
+#      ;;
+#
+#      5)
+#        content[JobStatus]='held'
+#      ;;
+#
+#      7)
+#        content[JobStatus]='suspended'
+#      ;;
+#
+#      *)
+#        content[JobStatus]='unknown'
+#      ;;
+#
+#      esac
+#    ;;
 
     *RemoteWallClockTime*) #Wall Duration
       debug_log "wall time"
       wallSeconds=${linearr[2]}
-      get_ISO_diff ${linearr[2]} || fail "Converting wall time seconds to iso duration"
-      content[WallDuration]=$ISOdiff
+      #get_ISO_diff ${linearr[2]} || fail "Converting wall time seconds to iso duration"
+      content[WallDuration]=${wallSeconds%.*}
     ;;
 
     *CumulativeRemoteUserCpu*) #divide by number of cores at end
@@ -126,7 +126,7 @@ do
     *JobStartDate*)
       debug_log "start time"
       startEpoch=${linearr[2]}
-      content[StartTime]=$(date -d @"${linearr[2]}" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting start time (in epoch) to ISO date"
+      content[StartTime]=$startEpoch    #$(date -d @"${linearr[2]}" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting start time (in epoch) to ISO date"
     ;;
 
     *EnteredCurrentStatus*)
@@ -146,7 +146,7 @@ do
         IFS="@" read -ra namearr <<< "$machineAndSlot" || fail "Reading host into array"
         debug_log "Name arr: ${namearr[@]}"
         fullName=${namearr[1]}
-        content[MachineName]=$fullName
+        content[MachineName]=$(echo $fullName | tr -d "\'\"")
 
         delim="--" #split machine name using "--" as delimiter
         s=$fullName$delim
@@ -193,7 +193,7 @@ do
     *MATCH_EXP_MachineHEPSPEC*)
       debug_log "hepspec"
       content[ServiceLevelType]="HEPSPEC"
-      content[ServiceLevel]=${linearr[2]}
+      content[ServiceLevel]=$(echo "${linearr[2]}" | tr -d "\'\"")
     ;;
 
     *CpusProvisioned*|*MachineAttrCpus*) #same thing but different names
@@ -275,13 +275,14 @@ do
       #echo "End time calculation"
       if [ $(bc <<< "$wallSeconds >= 0") -eq 1 ] #bc true is 1 
       then
-          endEpoch=$(bc <<< "scale=0; $startEpoch+$wallSeconds") || fail "Calculating end time (since epoch)"
-          content[EndTime]=$(date -d @"$endEpoch" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (if condition), tried to convert: $endEpoch"
+          endEpoch=$(bc <<< "scale=0; $startEpoch+$wallSeconds")
+          #endEpoch=$(bc <<< "scale=0; $startEpoch+$wallSeconds") || fail "Calculating end time (since epoch)"
+          content[EndTime]=${endEpoch%.*}   #$(date -d @"$endEpoch" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (if condition), tried to convert: $endEpoch"
       else #got negative wall time so use entered current status time as end time and get other values from there
-        let wallSeconds=$statusTime-$startEpoch
-        content[EndTime]=$(date -d @"$statusTime" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (else condition), tried to convert: $statusTime"
-        get_ISO_diff $wallSeconds || fail "Converting walltime to iso time duration"
-        content[WallDuration]=$ISOdiff
+        wallSeconds=$(bc <<< "scale=0; $statusTime-$startEpoch")
+        content[EndTime]=${statusTime%.*} #$(date -d @"$statusTime" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (else condition), tried to convert: $statusTime"
+        #get_ISO_diff $wallSeconds || fail "Converting walltime to iso time duration"
+        content[WallDuration]=${wallSeconds%.*} #$ISOdiff
       fi    
 
       case $groupName in #set SITE
@@ -381,8 +382,8 @@ do
       #echo "cpu/core calculation"
       cpuPerCore=$(bc <<< "scale=3; $cpuSeconds/${content[Processors]}") || fail "Calculating cpu time per core"
 
-      get_ISO_diff $cpuPerCore || fail "Setting cpu/core to iso time duration"
-      content[CpuDuration]=$ISOdiff
+      #get_ISO_diff $cpuPerCore || fail "Setting cpu/core to iso time duration"
+      content[CpuDuration]=${cpuPerCore%.*} #$ISOdiff
 
       #if remotewallclocktime negative use epoch times      
       #let wallTime=$endEpoch-$startEpoch
@@ -394,6 +395,10 @@ do
         content[ServiceLevelType]="HEPSPEC"
         content[ServiceLevel]="0.00"
         fail "HEPSPEC not specified! Setting to 0.00"
+        unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot statusTime
+        declare -A content
+        debug_log "Unsetting since HEPSPEC undefined"
+        continue
       fi
 
  
@@ -438,7 +443,7 @@ do
 
   esac
 
-done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^JobStatus\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
+done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
 }
 
 function localRotate(){
@@ -450,8 +455,8 @@ function localRotate(){
 function rotateLogs(){
   #get rid of two days old accouting files and move yesterdays files to .old
   echo "Rotating accounting records"
-  rm -f $recordFileDir*.alog.old
-  recFiles=($recordFileDir*.alog)
+  rm -f $recordFileDirectory*.alog.old
+  recFiles=($recordFileDirectory*.alog)
   for f in ${recFiles[@]}
   do
     mv $f $f.old 
@@ -466,9 +471,9 @@ function checkAndSplit(){ #takes wkdir=/home/mfens98/apel or other arg given
   for log in ${logsToSplit[@]}
   do
     fsize=$(stat --printf="%s" $log)
-    if [ $(bc <<< "$fsize >= 999999") == "1" ]
+    if [ $(bc <<< "$fsize >= 500000") == "1" ]
     then
-      numSplits=$(bc <<< "scale=0; $fsize/975000 +1")
+      numSplits=$(bc <<< "scale=0; $fsize/490000 +1")
       recordDelims=($(grep -n "%%" $log | cut -d: -f1))
 
       startLine=1
@@ -496,6 +501,7 @@ function checkAndSplit(){ #takes wkdir=/home/mfens98/apel or other arg given
         startLine=$afterEnd
 
       done
+      rm -f $log
     fi
   done
 }
@@ -512,7 +518,7 @@ function main(){
   salCount=0
   recordsWritten=0
   nullRecords=0
-  recordFileDir=${1}
+  recordFileDirectory=${1}
   logFile="accountingLog.log"
   dateSuffix=$(date +%s)
 
@@ -526,7 +532,7 @@ function main(){
   for f in ${histFiles[@]}
   do
     echo "Parsing file $f"
-    parse_history "$f" "$recordFileDir"
+    parse_history "$f" "$recordFileDirectory"
     if "$endOfRecords"
     then
       break
@@ -554,12 +560,12 @@ then
 fi
 
 logFile="$wkdir/logs/accountingLog.log"
-localRotate > /tmp/newLog.log 2>&1
+localRotate > /tmp/newLog.log 2> >(tee -a /tmp/newLog.log >&2)
 mv /tmp/newLog.log $logFile
 for host in csv2a bellecs "root@belle-sd" dune-condor
 do
-  ssh -p3121 -q $host.heprc.uvic.ca "$(typeset -f); main $remoteRecordFileDir" >> $logFile 2>&1
-  scp -P3121 -q $host.heprc.uvic.ca:$remoteRecordFileDir\*.alog $wkdir >> $logFile 2>&1
+  ssh -p3121 -q $host.heprc.uvic.ca "$(typeset -f); main $remoteRecordFileDir" >> $logFile 2> >(tee -a $logFile >&2)
+  scp -P3121 -q $host.heprc.uvic.ca:$remoteRecordFileDir\*.alog $wkdir >> $logFile 2> >(tee -a $logFile >&2)
 done
 
 #combine records from belle and belle-validation
@@ -569,7 +575,7 @@ if [[ "$?" == "0" ]]
 then
   rm -f ${vicRecords[1]}
 else
- fail "Combining belle-uvic records from bellecs and belle-sd" >> $logFile
+ fail "Combining belle-uvic records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
 fi
 
 desyRecords=($wkdir/desy*.alog)
@@ -578,17 +584,20 @@ if [[ "$?" == "0" ]]
 then
   rm -f ${desyRecords[1]}
 else
-  fail "Combining desy records from bellecs and belle-sd" >> $logFile
+  fail "Combining desy records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
 fi
 #make record files smaller than 1MB
 
 
 
-echo "Preparing to send record files" >> $logFile 2>&1
+echo "Preparing to send record files" >> $logFile 2> >(tee -a $logFile >&2)
 
 checkAndSplit $wkdir
   
-echo "Sending messages via the ssmsend container" >> $logFile 2>&1
+cp $wkdir/outgoing/*uvic* /home/mfens98/test_out/
+/home/mfens98/apel_container/run_apel.sh >> $logFile 2> >(tee -a $logFile >&2)
+
+echo "Sending messages via the ssmsend container" >> $logFile 2> >(tee -a $logFile >&2)
 # run apel_container
 #need to delete records after they've been sent??
 sudo podman run --rm --entrypoint ssmsend \
@@ -596,13 +605,13 @@ sudo podman run --rm --entrypoint ssmsend \
        -v $wkdir/outgoing:/var/spool/apel/outgoing \
        -v /etc/grid-security:/etc/grid-security \
        -v $wkdir/logs:/var/log/apel \
-       stfc/ssm:latest >> $logFile 2>&1
+       stfc/ssm:latest >> $logFile 2> >(tee -a $logFile >&2)
 
 #delete sent messages
-#rm -f $wkdir/outgoing/*
+rm -f $wkdir/outgoing/*
 
 #move messages to archive
-echo "Archiving messages" >> $logFile 2>&1
+echo "Archiving messages" >> $logFile 2> >(tee -a $logFile >&2)
 fullLogs=($wkdir/*.alog)
 
 dateTag=$(date -d "Yesterday 00:00:00" -u +%m%y)
@@ -616,4 +625,4 @@ do
   rm -f $record
   unset splitName splitPath
 
-done >> $logFile 2>&1
+done >> $logFile 2> >(tee -a $logFile >&2)
