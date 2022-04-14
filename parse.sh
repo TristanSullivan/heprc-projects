@@ -54,6 +54,11 @@ function debug_log(){
 
 function parse_history(){
 declare -A content
+
+lastsec=$(date -d "Yesterday 23:59:59" -u +%s)
+firstsec=$(date -d "Yesterday 00:00:00" -u +%s)
+leewaysec=$(date -d "3 days ago 00:00:00" -u +%s)
+
 while read -r line
 do
   IFS=" " read -ra linearr <<< "$line" 
@@ -195,6 +200,10 @@ do
       content[ServiceLevelType]="HEPSPEC"
       content[ServiceLevel]=$(echo "${linearr[2]}" | tr -d "\'\"")
     ;;
+    HEPSPEC*)
+      debug_log "new hepspec"
+      new_hepspec=$(echo "${linearr[2]}" | tr -d "\'\"")
+    ;;
 
     *CpusProvisioned*|*MachineAttrCpus*) #same thing but different names
       debug_log "Processors"
@@ -211,7 +220,7 @@ do
       debug_log "Final stuff"
       #echo "Checking time and status for ID: ${content[LocalJobId]}"
       
-      if [[ "$startEpoch" == "" || $(bc <<< "$statusTime-$startEpoch == 0") -eq 1 ]]
+      if [[ "$startEpoch" == "" || ${statusTime%.*} -eq ${startEpoch%.*} ]]
       then
         debug_log "Got aborted job with 0 wall time or no start time, not writing. Clearing vars."
         let nullRecords=$nullRecords+1
@@ -221,7 +230,7 @@ do
         continue
       fi
 
-      if [ $statusTime -gt $(date -d "Yesterday 23:59:59" -u +%s) ] #start time between yesterday 00:00:00 and yesterday 23:59:59
+      if [[ $statusTime -gt $lastsec ]] #start time between yesterday 00:00:00 and yesterday 23:59:59
       then  #newer than yesterday
         if [ $progression != "-1" ]
         then
@@ -232,7 +241,7 @@ do
         unset content code fullName delim s groupName cloudName startEpoch endEpoch statusTime recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot
         declare -A content 
         continue #get to the next record since reverse chronological order
-      elif [ $statusTime -lt $(date -d "Yesterday 00:00:00" -u +%s) ]
+      elif [[ $statusTime -lt $firstsec ]]
       then
         if [ $progression != 1 ]
         then
@@ -243,7 +252,7 @@ do
         debug_log "Unsetting at record too old"
         unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot #dont unset status time yet!
         declare -A content
-        if [ $statusTime -lt $(date -d "3 days ago 00:00:00" -u +%s) ]
+        if [[ $statusTime -lt $leewaysec ]]
         then
           unset statusTime
           endOfRecords="true"
@@ -271,15 +280,16 @@ do
         debug_log ">>>>>>>Salvaged a record from yesterday that was amongst records that are too old (near time $(date -d @"$oldRecordDate" -u)) >>>>>>>>"
 
       fi
+      #ehoco this is line 283
       #calculate end time
       #echo "End time calculation"
-      if [ $(bc <<< "$wallSeconds >= 0") -eq 1 ] #bc true is 1 
+      if [[ ${wallSeconds%.*} -ge 0 ]] #bc true is 1 
       then
-          endEpoch=$(bc <<< "scale=0; $startEpoch+$wallSeconds")
+          (( endEpoch=${startEpoch%.*} + ${wallSeconds%.*} ))
           #endEpoch=$(bc <<< "scale=0; $startEpoch+$wallSeconds") || fail "Calculating end time (since epoch)"
           content[EndTime]=${endEpoch%.*}   #$(date -d @"$endEpoch" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (if condition), tried to convert: $endEpoch"
       else #got negative wall time so use entered current status time as end time and get other values from there
-        wallSeconds=$(bc <<< "scale=0; $statusTime-$startEpoch")
+        (( wallSeconds=${statusTime%.*} - ${startEpoch%.*} ))
         content[EndTime]=${statusTime%.*} #$(date -d @"$statusTime" -u +%Y-%m-%dT%H:%M:%SZ) || fail "Converting end time to ISO date (else condition), tried to convert: $statusTime"
         #get_ISO_diff $wallSeconds || fail "Converting walltime to iso time duration"
         content[WallDuration]=${wallSeconds%.*} #$ISOdiff
@@ -380,7 +390,8 @@ do
 
       #calculate cpu time
       #echo "cpu/core calculation"
-      cpuPerCore=$(bc <<< "scale=3; $cpuSeconds/${content[Processors]}") || fail "Calculating cpu time per core"
+      #cpuPerCore=$(bc <<< "scale=3; $cpuSeconds/${content[Processors]}") || fail "Calculating cpu time per core"
+      cpuPerCore=$cpuSeconds || fail "Calculating cpu time per core"
 
       #get_ISO_diff $cpuPerCore || fail "Setting cpu/core to iso time duration"
       content[CpuDuration]=${cpuPerCore%.*} #$ISOdiff
@@ -390,16 +401,34 @@ do
       #get_ISO_diff $wallTime
       #content[WallDuration]=$ISOdiff
       #echo "Hepspec setting if not set already"
+
       if [ "${content[ServiceLevel]}" == "" ]
       then
-        content[ServiceLevelType]="HEPSPEC"
-        content[ServiceLevel]="0.00"
-        fail "HEPSPEC not specified! Setting to 0.00"
-        unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot statusTime
-        declare -A content
-        debug_log "Unsetting since HEPSPEC undefined"
-        continue
+        if [ "$new_hepspec" == "" ]
+        then
+          if [[ "${content[MachineName]}" == *"arbutus"* ]] || [[ "${content[MachineName]}" == *"cc-east"* ]] || [[ "${content[MachineName]}" == *"otter"* ]] || [[ "${content[MachineName]}" == *"beaver"* ]] || [[ "${content[MachineName]}" == *"chameleon"* ]]
+          then
+            content[ServiceLevel]="11.00"
+          else
+            content[ServiceLevelType]="HEPSPEC"
+            content[ServiceLevel]="0.00"
+            fail "HEPSPEC not specified! Setting to 0.00"
+            unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot statusTime
+            declare -A content
+            debug_log "Unsetting since HEPSPEC undefined"
+            continue
+          fi
+        else
+          content[ServiceLevel]="$new_hepspec"
+        fi
       fi
+
+      if [[ "${content[MachineName]}" == *"arbutus"* ]]
+      then
+        content[ServiceLevel]="11.00"
+      fi
+      
+      
 
  
 
@@ -443,7 +472,8 @@ do
 
   esac
 
-done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
+done < <(tac ${1} | grep "^GlobalJobId\|^Owner\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^HEPSPEC\|^\*\*\*" | sed "s/^\*\*\*.*//g" | sed -e '$a\ ')
+#done < <(condor_history -long -file ${1} | grep "^GlobalJobId\|^Owner\|^RemoteWallClockTime\|^CumulativeRemoteUserCpu\|^JobStartDate\|^EnteredCurrentStatus\|^LastRemoteHost\|^RemoteHost\|^MATCH_EXP_MachineHEPSPEC\|^CpusProvisioned\|^MachineAttrCpus\|^RequestCpus\|^\s*$")
 }
 
 function localRotate(){
@@ -457,10 +487,24 @@ function rotateLogs(){
   echo "Rotating accounting records"
   rm -f $recordFileDirectory*.alog.old
   recFiles=($recordFileDirectory*.alog)
-  for f in ${recFiles[@]}
-  do
-    mv $f $f.old 
-  done
+  #for f in ${recFiles[@]}
+  #do
+  #  mv $f $f.old
+  #done
+
+  if compgen -G "$recordFileDirectory*.alog" > /dev/null
+  then
+    for f in ${recFiles[@]}
+    do
+      mv $f $f.old
+    done
+  else
+    if [[ "$(hostname -s)" != *"belle-sd"* ]]
+    then
+      >&2 echo "WARNING: $(hostname -s), no records recorded yesterday"
+    fi
+  fi
+
 }
 
 function checkAndSplit(){ #takes wkdir=/home/mfens98/apel or other arg given
@@ -506,6 +550,22 @@ function checkAndSplit(){ #takes wkdir=/home/mfens98/apel or other arg given
   done
 }
 
+function copy_records(){
+
+# NEED TO FIGURE OUT HOW TO IGNORE THE BELLE-SD ERROR WHEN THERE ARE NO FILES ###
+  accountinghost=${1}
+  wkpath=${2}
+
+  if compgen -G "$remoteRecordFileDir*.alog" > /dev/null
+  then
+    scp -P3121 -q $remoteRecordFileDir*.alog $accountinghost:$wkpath
+  else
+    if [[ "$(hostname -s)" != *"belle-sd"* ]]
+    then
+      >&2 echo "Warning: $(hostname -s) No records written for today!"
+    fi
+  fi
+}
 
 
 function main(){
@@ -521,6 +581,8 @@ function main(){
   recordFileDirectory=${1}
   logFile="accountingLog.log"
   dateSuffix=$(date +%s)
+  #accountingHost=${2}
+  #wk_path=${3}
 
   #get all condor history files in /var/log/condor/history
   histMain=$(condor_config_val HISTORY)
@@ -548,7 +610,7 @@ function main(){
   fi
   echo -e "************************ Finished on $(hostname -s) $(date) *********************\n"
 
-  
+  #copy_records $accountingHost $wk_path
 }
 remoteRecordFileDir="/var/log/apel/"
 wkdir="/home/mfens98/apel"
@@ -565,26 +627,41 @@ mv /tmp/newLog.log $logFile
 for host in csv2a bellecs "root@belle-sd" dune-condor
 do
   ssh -p3121 -q $host.heprc.uvic.ca "$(typeset -f); main $remoteRecordFileDir" >> $logFile 2> >(tee -a $logFile >&2)
-  scp -P3121 -q $host.heprc.uvic.ca:$remoteRecordFileDir\*.alog $wkdir >> $logFile 2> >(tee -a $logFile >&2)
+  { error=$(scp -P3121 -q $host.heprc.uvic.ca:$remoteRecordFileDir\*.alog $wkdir 2>&1 1>&$out); } {out}>&1 >> $logFile
+  if [[ "$?" != "0" ]]
+  then
+    if [[ "$host" != *"belle-sd"* ]] || [[ "$error" != *"No such"* ]]
+    then
+      >&2 echo "Warning: $host scp error: $error" >> $logFile 2> >(tee -a $logFile >&2)
+    else
+      echo "$error" >> $logFile #put in log but don't alert via email
+    fi
+  fi
 done
 
 #combine records from belle and belle-validation
 vicRecords=($wkdir/belle-uvic*.alog)
-tail -n +2 ${vicRecords[1]} >> ${vicRecords[0]}
-if [[ "$?" == "0" ]]
+if [[ ${#vicRecords[@]} -gt 1 ]]
 then
-  rm -f ${vicRecords[1]}
-else
- fail "Combining belle-uvic records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
+  tail -n +2 ${vicRecords[1]} >> ${vicRecords[0]}
+  if [[ "$?" == "0" ]]
+  then
+    rm -f ${vicRecords[1]}
+  else
+   fail "Combining belle-uvic records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
+  fi
 fi
 
 desyRecords=($wkdir/desy*.alog)
-tail -n +2 ${desyRecords[1]} >> ${desyRecords[0]}
-if [[ "$?" == "0" ]]
+if [[ ${#desyRecords[@]} -gt 1 ]]
 then
-  rm -f ${desyRecords[1]}
-else
-  fail "Combining desy records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
+  tail -n +2 ${desyRecords[1]} >> ${desyRecords[0]}
+  if [[ "$?" == "0" ]]
+  then
+    rm -f ${desyRecords[1]}
+  else
+    fail "Combining desy records from bellecs and belle-sd" >> $logFile 2> >(tee -a $logFile >&2)
+  fi
 fi
 #make record files smaller than 1MB
 
@@ -594,8 +671,8 @@ echo "Preparing to send record files" >> $logFile 2> >(tee -a $logFile >&2)
 
 checkAndSplit $wkdir
   
-cp $wkdir/outgoing/*uvic* /home/mfens98/test_out/
-/home/mfens98/apel_container/run_apel.sh >> $logFile 2> >(tee -a $logFile >&2)
+#cp $wkdir/outgoing/*uvic* /home/mfens98/test_out/
+#/home/mfens98/apel_container/run_apel.sh >> $logFile 2> >(tee -a $logFile >&2)
 
 echo "Sending messages via the ssmsend container" >> $logFile 2> >(tee -a $logFile >&2)
 # run apel_container
