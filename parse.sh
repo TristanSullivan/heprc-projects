@@ -358,7 +358,7 @@ do
               content[Site]="DESY-HH"
               recordFileName="desy_record"
             ;;
-            *otter*|*beaver*|*heprc*)
+            *otter*|*beaver*|*heprc*|*beluga*)
               content[Site]="CA-UVic-Cloud"
               recordFileName="uvic_record"
             ;;
@@ -406,26 +406,29 @@ do
       then
         if [ "$new_hepspec" == "" ]
         then
-          if [[ "${content[MachineName]}" == *"arbutus"* ]] || [[ "${content[MachineName]}" == *"cc-east"* ]] || [[ "${content[MachineName]}" == *"otter"* ]] || [[ "${content[MachineName]}" == *"beaver"* ]] || [[ "${content[MachineName]}" == *"chameleon"* ]]
+          if [[ "${content[MachineName]}" == *"arbutus"* ]] || [[ "${content[MachineName]}" == *"cc-east"* ]] || [[ "${content[MachineName]}" == *"otter"* ]] || [[ "${content[MachineName]}" == *"beaver"* ]] || [[ "${content[MachineName]}" == *"chameleon"* ]] || "${content[MachineName]}" == *"beluga"* ]]
           then
-            content[ServiceLevel]="11.00"
+            content[ServiceLevel]="19.00"
           else
             content[ServiceLevelType]="HEPSPEC"
-            content[ServiceLevel]="0.00"
-            fail "HEPSPEC not specified! Setting to 0.00"
-            unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot statusTime
-            declare -A content
-            debug_log "Unsetting since HEPSPEC undefined"
-            continue
+            content[ServiceLevel]="19.00"
+            fail "HEPSPEC not specified! Setting to default 19.00"
+            #unset content code fullName delim s groupName cloudName startEpoch endEpoch recordFileName recordFileDir recordFilePath cpuPerCore wallSeconds machineAndSlot statusTime
+            #declare -A content
+            #debug_log "Unsetting since HEPSPEC undefined"
+            debug_log "HEPSPEC undefined, set to default of 19.00"
+            #continue
           fi
         else
+          content[ServiceLevelType]="HEPSPEC"
           content[ServiceLevel]="$new_hepspec"
         fi
       fi
 
       if [[ "${content[MachineName]}" == *"arbutus"* ]]
       then
-        content[ServiceLevel]="11.00"
+        content[ServiceLevelType]="HEPSPEC"
+        content[ServiceLevel]="19.00"
       fi
       
       
@@ -671,10 +674,12 @@ echo "Preparing to send record files" >> $logFile 2> >(tee -a $logFile >&2)
 
 checkAndSplit $wkdir
   
-#cp $wkdir/outgoing/*uvic* /home/mfens98/test_out/
-#/home/mfens98/apel_container/run_apel.sh >> $logFile 2> >(tee -a $logFile >&2)
+cp $wkdir/outgoing/*uvic* /home/mfens98/test_out/
+/home/mfens98/apel_container/run_apel.sh >> $logFile 2> >(tee -a $logFile >&2)
 
 echo "Sending messages via the ssmsend container" >> $logFile 2> >(tee -a $logFile >&2)
+
+
 # run apel_container
 #need to delete records after they've been sent??
 sudo podman run --rm --entrypoint ssmsend \
@@ -685,6 +690,7 @@ sudo podman run --rm --entrypoint ssmsend \
        stfc/ssm:latest >> $logFile 2> >(tee -a $logFile >&2)
 
 #delete sent messages
+cp $wkdir/outgoing/* /tmp/sent_records/ >> /dev/null 2>&1
 rm -f $wkdir/outgoing/*
 
 #move messages to archive
