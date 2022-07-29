@@ -28,6 +28,11 @@ data=json.load(request)
 if len(mo) == 1:
     mo="0"+mo
 
+
+atlasMismatch = False
+belleMismatch = False
+aegi = 0
+begi = 0
 for entry in data:
     try:
         thiskey = "%s-%s"%(yr,mo)
@@ -37,11 +42,23 @@ for entry in data:
     
     if entry['id'] == 'atlas':
         #check atlas script
-        if shOut['atlas']['yesterday'] != egijobs and int(shOut['atlas']['today']) != egijobs:
-                raise Exception("Atlas jobs do not match!\nEGI: %s\nScript Yesterday: %s\nScript Today: %s" % (egijobs,shOut['atlas']['yesterday'],shOut['atlas']['today']))
+        if int(shOut['atlas']['yesterday']) != egijobs and int(shOut['atlas']['today']) != egijobs:
+            aegi=egijobs
+            atlasMismatch=True    
     elif entry['id'] == 'belle':
         #check belle output
-        if shOut['belle']['yesterday'] != egijobs and int(shOut['belle']['today']) != egijobs:
-                raise Exception("Belle jobs do not match!\nEGI: %s\nScript Yesterday: %s\nScript Today: %s" % (egijobs,shOut['belle']['yesterday'],shOut['belle']['today']))
+        if int(shOut['belle']['yesterday']) != egijobs and int(shOut['belle']['today']) != egijobs:
+            begi=egijobs
+            belleMismatch=True    
     else:
         continue
+
+
+if atlasMismatch or belleMismatch:
+    if atlasMismatch:
+        sys.stderr.write("Atlas jobs do not match!\nEGI: %s\nScript Yesterday: %s\nScript Today: %s" % (aegi,shOut['atlas']['yesterday'],shOut['atlas']['today']))
+        sys.stderr.write("\n")
+    if belleMismatch:
+        sys.stderr.write("Belle jobs do not match!\nEGI: %s\nScript Yesterday: %s\nScript Today: %s" % (begi,shOut['belle']['yesterday'],shOut['belle']['today']))
+        sys.stderr.write("\n")
+    raise Exception("Job Mismatch")
